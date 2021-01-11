@@ -1,6 +1,6 @@
 pub type Iri = String;
 
-#[derive(Debug, serde::Serialize, serde::Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, serde::Serialize, serde::Deserialize, PartialEq, Eq, PartialOrd, Ord, Clone)]
 pub enum RdfNode {
     Blank(String),
     Iri(Iri),
