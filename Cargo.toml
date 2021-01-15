@@ -7,3 +7,5 @@ edition = "2018"
 [dependencies]
 rify = { version = "0.5.1", path = "../rify" }
 serde = { version = "1", features = ["derive"] }
+rio_turtle = "0.5.1"
+rio_api = "0.5.1"

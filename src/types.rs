@@ -11,3 +11,4 @@ pub enum RdfNode {
         language: Option<String>,
     },
 }
+

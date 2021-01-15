@@ -1,9 +1,9 @@
-use std::collections::BTreeMap;
+// use std::collections::BTreeMap;
 
-/// mutable a bijective mapping from usize to T
-pub struct Translator<T> {
-    widdershins: Vec<T>,
-    deisul: BTreeMap<T, usize>,
-}
+// /// mutable a bijective mapping from usize to T
+// pub struct Translator<T> {
+//     widdershins: Vec<T>,
+//     deisul: BTreeMap<T, usize>,
+// }
 
-impl<T> Translator<T> {}
+// impl<T> Translator<T> {}

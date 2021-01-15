@@ -40,6 +40,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "oxilangtag"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "91b91e9ce02b749ae761eaa3686f24bc97d5b75ca9a17c774f5de4e5d788d451"
+
+[[package]]
+name = "oxiri"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c8e54fb37480ffa01a9af93f991ba229b3091f2e6ac84c8f6df2c509356cc473"
+
+[[package]]
 name = "proc-macro2"
 version = "1.0.24"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -53,6 +65,8 @@ name = "quaerit-machina"
 version = "0.1.0"
 dependencies = [
  "rify",
+ "rio_api",
+ "rio_turtle",
  "serde",
 ]
 
@@ -72,6 +86,23 @@ dependencies = [
  "serde",
  "serde_json",
  "wasm-bindgen",
+]
+
+[[package]]
+name = "rio_api"
+version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "569180d6b24a8320bc79ae3febe47dce9383941798d9308b7cee776ef5695f8a"
+
+[[package]]
+name = "rio_turtle"
+version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1115857aacc755b3dca39bdb4e72e23238169f49b16411fa5079dcc780288c67"
+dependencies = [
+ "oxilangtag",
+ "oxiri",
+ "rio_api",
 ]
 
 [[package]]
