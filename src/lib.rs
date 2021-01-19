@@ -5,32 +5,84 @@ mod rdf_graph;
 mod translate;
 mod ttl;
 mod types;
+mod util;
 
 extern crate alloc;
 extern crate core;
 
-use alloc::collections::{BTreeMap, BTreeSet};
-use rify::Claim;
+use crate::rdf_graph::{Graph, Namer};
+use rify::{Claim, Entity, Entity::Bound};
+use types::RdfNode::{self, Iri};
+
+type Rules = Vec<rify::Rule<String, RdfNode>>;
+pub struct Curio {
+    if_all: Vec<Claim<Entity<String, RdfNode>>>,
+    interesting: Vec<Entity<String, RdfNode>>,
+}
+
+impl Curio {
+    fn to_rule(self) -> Result<rify::Rule<String, RdfNode>, rify::InvalidRule<String>> {
+        let Curio {
+            if_all,
+            interesting,
+        } = self;
+        let then = interesting
+            .into_iter()
+            .map(|s| {
+                [
+                    s,
+                    Bound(Iri("uuid:19d3546f-e33c-4f7d-bac0-64c42fc20a02".to_string())),
+                    Bound(Iri("uuid:4e507a3e-0d0a-4c97-9ea8-aa1a51285006".to_string())),
+                ]
+            })
+            .collect();
+        rify::Rule::create(if_all, then)
+    }
+}
+
+pub type Curiosity = Vec<Curio>;
 
 pub struct CuriousAgent {
-    /// the implication relationships used thus far, these relationships tell us which knowlege to
-    /// invalidate when information sources change
-    _implications: BTreeMap<Fact, Claim<Id>>,
-    /// Everthing the agent has ever been curious about, excluding unresolved curiosities.
-    _curious: BTreeSet<Id>,
-    /// Things the agent is curious about, but for which its curiosity has not been satiated.
-    _unresolved_curious: BTreeSet<Id>,
-    _knowlege: rify::reasoner::TripleStore,
+    logic: Rules,
+    curiosity: Rules,
+    cg: Graph,
+    namer: Namer,
 }
 
-#[derive(Debug, serde::Serialize, serde::Deserialize, PartialEq, Eq, PartialOrd, Ord)]
-pub enum Fact {
-    Derived(Claim<Id>),
-    Known,
-}
+impl CuriousAgent {
+    pub fn create(logic: Rules, curiosity: Curiosity) -> Result<Self, rify::InvalidRule<String>> {
+        let curiosity = curiosity
+            .into_iter()
+            .map(Curio::to_rule)
+            .collect::<Result<_, rify::InvalidRule<String>>>()?;
+        Ok(CuriousAgent {
+            logic,
+            curiosity,
+            cg: Graph::default(),
+            namer: Namer::default(),
+        })
+    }
 
-/// An index to some rdf entity
-type Id = usize;
+    fn reason(&self) -> Vec<rify::Claim<RdfNode>> {
+        unimplemented!()
+    }
+
+    fn curious(&self) -> Vec<RdfNode> {
+        unimplemented!()
+    }
+
+    /// Extend the inner knowlege graph but dont rename any blank nodes
+    fn extend_unhygienic(&mut self, other: Graph) {
+        self.cg.0.extend(other.0)
+    }
+
+    /// Extend the inner knowlege graph, renaming blank nodes to prevent collisions
+    fn extend_hygienic(&mut self, other: Graph) {
+        let mut other = other;
+        self.namer.realloc_names(&mut other);
+        self.extend_hygienic(other);
+    }
+}
 
 #[cfg(test)]
 mod test {
@@ -38,19 +90,34 @@ mod test {
     use crate::rdf_graph::Graph;
     use crate::ttl::from_ttl;
     use crate::types::RdfNode;
+    use alloc::collections::BTreeMap;
 
     #[test]
     fn delegate_e2e() {
         // A is trusted
-        // A claims that B mayClaim anything
-        // B claims that C mayClaim age claims
-        // C claims an age claim
-        // D claims an age claim
-
-        // The age claim from C is successfully unwrapped
-        // The age claim from D is ignored
-
+        let known = from_ttl(
+            "
+            @prefix dock: <https://dock.io/rdf/alpha/> .
+            @prefix schema: <http://schema.org/> .
+            @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+            
+            # Unrestricted delegation
+            <uuid:d653df41-fb26-46b2-9edf-35a73836f7e0> dock:allowedSubjects dock:ANYTHING .
+            <uuid:d653df41-fb26-46b2-9edf-35a73836f7e0> dock:allowedPredicates dock:ANYTHING .
+            <uuid:d653df41-fb26-46b2-9edf-35a73836f7e0> dock:allowedObjects dock:ANYTHING .
+    
+            # Delegation that grants only the authority to claim birthdate
+            <uuid:ec3ae823-2e51-48ab-bdbf-bc41037eeead> dock:allowedSubjects dock:ANYTHING .
+            <uuid:ec3ae823-2e51-48ab-bdbf-bc41037eeead> dock:allowedPredicates
+                [ rdfs:member schema:birthDate ] .
+            <uuid:ec3ae823-2e51-48ab-bdbf-bc41037eeead> dock:allowedObjects dock:ANYTHING .
+    
+            # A is trusted with unrestricted delegation
+            <did:a> dock:mayClaim <uuid:d653df41-fb26-46b2-9edf-35a73836f7e0> .
+            ",
+        );
         let supergraph: &[(&str, &str)] = &[
+            // A claims that B mayClaim anything
             (
                 "did:a",
                 "
@@ -62,13 +129,10 @@ mod test {
                 "did:a:claims",
                 "
                 @prefix dock: <https://dock.io/rdf/alpha/> .
-                <did:b> dock:mayclaim [
-                    dock:allowedSubjects dock:ANYTHING ;
-                    dock:allowedPredicates dock:ANYTHING ;
-                    dock:allowedObjects dock:ANYTHING ;
-                ] .
+                <did:b> dock:mayclaim <uuid:d653df41-fb26-46b2-9edf-35a73836f7e0> .
                 ",
             ),
+            // B claims that C mayClaim age claims
             (
                 "did:b",
                 "
@@ -80,21 +144,65 @@ mod test {
                 "did:b:claims",
                 "
                 @prefix dock: <https://dock.io/rdf/alpha/> .
-                @prefix ex: <https://example.com/> .
-                <did:c> dock:mayclaim [
-                    dock:allowedSubjects dock:ANYTHING ;
-                    dock:allowedPredicates ( ex:born ) ;
-                    dock:allowedObjects dock:ANYTHING ;
-                ] .
+                <did:c> dock:mayclaim <uuid:ec3ae823-2e51-48ab-bdbf-bc41037eeead> .
+                ",
+            ),
+            // C claims an age claim
+            (
+                "did:c",
+                "
+                @prefix dock: <https://dock.io/rdf/alpha/> .
+                <did:c> dock:attestDocumentContent <did:c:claims> .
+                ",
+            ),
+            (
+                "did:c:claims",
+                "
+                @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+                @prefix schema: <http://schema.org/> .
+                <did:c> schema:birthDate \"2002-09-24Z\"^^xsd:date .
+                ",
+            ),
+            // D claims an age claim
+            (
+                "did:d",
+                "
+                @prefix dock: <https://dock.io/rdf/alpha/> .
+                <did:c> dock:attestDocumentContent <did:d:claims> .
+                ",
+            ),
+            (
+                "did:d:claims",
+                "
+                @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+                @prefix schema: <http://schema.org/> .
+                <did:d> schema:birthDate \"2002-09-24Z\"^^xsd:date .
                 ",
             ),
         ];
         let supergraph: BTreeMap<&str, Graph> =
             supergraph.iter().map(|(a, b)| (*a, from_ttl(b))).collect();
-        unimplemented!("{:?}", supergraph);
+
+        let mut ca = CuriousAgent::create(vec![], vec![]).unwrap();
+        crawl(&mut ca, &supergraph);
+
+        // The age claim from C is successfully unwrapped
+        unimplemented!();
+        // The age claim from D is ignored
+        unimplemented!();
     }
 
-    fn reify_claim(claimer: RdfNode, triple: Claim<RdfNode>) -> [Claim<RdfNode>; 4] {
-        unimplemented!()
+    // TODO
+    fn crawl(ca: &mut CuriousAgent, l: &impl Lookup) {}
+
+    trait Lookup {
+        fn lookup(&self, url: &str) -> Result<Graph, ()>;
+    }
+
+    impl Lookup for BTreeMap<&str, Graph> {
+        fn lookup(&self, url: &str) -> Result<Graph, ()> {
+            let raw = self.get(url).ok_or(())?;
+            Ok(raw.clone().reify(RdfNode::Iri(url.to_string())))
+        }
     }
 }
