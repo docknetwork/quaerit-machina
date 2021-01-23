@@ -10,77 +10,129 @@ mod util;
 extern crate alloc;
 extern crate core;
 
-use crate::rdf_graph::{Graph, Namer};
-use rify::{Claim, Entity, Entity::Bound};
-use types::RdfNode::{self, Iri};
-
-type Rules = Vec<rify::Rule<String, RdfNode>>;
-pub struct Curio {
-    if_all: Vec<Claim<Entity<String, RdfNode>>>,
-    interesting: Vec<Entity<String, RdfNode>>,
-}
-
-impl Curio {
-    fn to_rule(self) -> Result<rify::Rule<String, RdfNode>, rify::InvalidRule<String>> {
-        let Curio {
-            if_all,
-            interesting,
-        } = self;
-        let then = interesting
-            .into_iter()
-            .map(|s| {
-                [
-                    s,
-                    Bound(Iri("uuid:19d3546f-e33c-4f7d-bac0-64c42fc20a02".to_string())),
-                    Bound(Iri("uuid:4e507a3e-0d0a-4c97-9ea8-aa1a51285006".to_string())),
-                ]
-            })
-            .collect();
-        rify::Rule::create(if_all, then)
-    }
-}
-
-pub type Curiosity = Vec<Curio>;
+use crate::rdf_graph::Graph;
+use alloc::collections::BTreeMap;
+use alloc::collections::BTreeSet;
+use oxigraph::model::NamedNode;
+use oxigraph::model::NamedOrBlankNode;
+use oxigraph::model::Term;
+use oxigraph::sparql::algebra::Query;
+use oxigraph::sparql::EvaluationError;
+use oxigraph::sparql::QueryResults;
+use oxigraph::store::memory::MemoryStore;
 
 pub struct CuriousAgent {
-    logic: Rules,
-    curiosity: Rules,
-    cg: Graph,
-    namer: Namer,
+    /// queries in this list must all be select statements
+    curiosity: Vec<Query>,
+    cg: MemoryStore,
+    lookedup: BTreeSet<String>,
 }
 
 impl CuriousAgent {
-    pub fn create(logic: Rules, curiosity: Curiosity) -> Result<Self, rify::InvalidRule<String>> {
-        let curiosity = curiosity
-            .into_iter()
-            .map(Curio::to_rule)
-            .collect::<Result<_, rify::InvalidRule<String>>>()?;
-        Ok(CuriousAgent {
-            logic,
+    pub fn create(curiosity: Vec<Query>) -> Result<Self, ()> {
+        if !curiosity.iter().all(is_select) {
+            return Err(());
+        }
+        Ok(Self {
             curiosity,
-            cg: Graph::default(),
-            namer: Namer::default(),
+            cg: MemoryStore::new(),
+            lookedup: Default::default(),
         })
     }
 
-    fn reason(&self) -> Vec<rify::Claim<RdfNode>> {
-        unimplemented!()
+    pub fn curious(&self) -> Result<Vec<Term>, EvaluationError> {
+        assert!(self.curiosity.iter().all(is_select));
+        let mut ret = Vec::new();
+        for cur in &self.curiosity {
+            let q = self.cg.query(cur.clone())?;
+            match q {
+                QueryResults::Solutions(solutions) => {
+                    for s in solutions {
+                        for (_name, term) in s?.iter() {
+                            ret.push(term.clone());
+                        }
+                    }
+                }
+                QueryResults::Boolean(_) | QueryResults::Graph(_) => {
+                    panic!("Expected SELECT statements only.");
+                }
+            }
+        }
+        Ok(ret)
     }
 
-    fn curious(&self) -> Vec<RdfNode> {
-        unimplemented!()
+    pub fn add_document_lookup(&mut self, iri: &str, mut content: Graph) {
+        content.reify(NamedOrBlankNode::NamedNode(NamedNode::new(iri).unwrap()));
+        for triple in content.triples() {
+            self.cg.insert(triple.clone().in_graph(None));
+        }
     }
 
-    /// Extend the inner knowlege graph but dont rename any blank nodes
-    fn extend_unhygienic(&mut self, other: Graph) {
-        self.cg.0.extend(other.0)
+    pub fn crawl(&mut self, l: &impl Lookup) {
+        while !self.next(l) {}
     }
 
-    /// Extend the inner knowlege graph, renaming blank nodes to prevent collisions
-    fn extend_hygienic(&mut self, other: Graph) {
-        let mut other = other;
-        self.namer.realloc_names(&mut other);
-        self.extend_hygienic(other);
+    pub fn next(&mut self, l: &impl Lookup) -> bool {
+        let curious = self.curious().unwrap();
+        let curious = curious
+            .iter()
+            .filter_map(as_named_node)
+            .map(|n| n.as_str().to_string());
+        if curious.clone().all(|nn| self.lookedup.contains(&nn)) {
+            true
+        } else {
+            for c in curious {
+                self.try_lookup(&c, &l);
+            }
+            false
+        }
+    }
+
+    pub fn try_lookup(&mut self, url: &str, l: impl Lookup) {
+        if !self.lookedup.contains(url) {
+            if let Some(graph) = l.lookup(url) {
+                self.add_document_lookup(url, graph);
+            }
+            self.lookedup.insert(url.to_string());
+        }
+    }
+}
+
+fn show(cg: &MemoryStore) -> String {
+    use std::io::Cursor;
+    let mut ret = Vec::new();
+    cg.dump_dataset(Cursor::new(&mut ret), oxigraph::io::DatasetFormat::NQuads)
+        .unwrap();
+    String::from_utf8(ret).unwrap()
+}
+
+pub trait Lookup {
+    fn lookup(&self, url: &str) -> Option<Graph>;
+}
+
+impl Lookup for BTreeMap<&str, Graph> {
+    fn lookup(&self, url: &str) -> Option<Graph> {
+        self.get(url).cloned()
+    }
+}
+
+impl<T: Lookup> Lookup for &T {
+    fn lookup(&self, url: &str) -> Option<Graph> {
+        (*self).lookup(url)
+    }
+}
+
+fn as_named_node(term: &Term) -> Option<&NamedNode> {
+    match term {
+        Term::NamedNode(nn) => Some(nn),
+        Term::BlankNode(_) | Term::Literal(_) => None,
+    }
+}
+
+fn is_select(q: &Query) -> bool {
+    match q {
+        Query::Select { .. } => true,
+        _ => false,
     }
 }
 
@@ -89,7 +141,6 @@ mod test {
     use super::*;
     use crate::rdf_graph::Graph;
     use crate::ttl::from_ttl;
-    use crate::types::RdfNode;
     use alloc::collections::BTreeMap;
 
     #[test]
@@ -183,26 +234,26 @@ mod test {
         let supergraph: BTreeMap<&str, Graph> =
             supergraph.iter().map(|(a, b)| (*a, from_ttl(b))).collect();
 
-        let mut ca = CuriousAgent::create(vec![], vec![]).unwrap();
-        crawl(&mut ca, &supergraph);
+        let mut ca = CuriousAgent::create(vec![
+            "SELECT ?s WHERE { ?s ?p ?o }".parse().unwrap(),
+            "SELECT ?p WHERE { ?s ?p ?o }".parse().unwrap(),
+            "SELECT ?o WHERE { ?s ?p ?o }".parse().unwrap(),
+        ])
+        .unwrap();
+        ca.try_lookup("did:a", &supergraph);
+
+        dbg!(ca.cg.len());
+        println!("{}", show(&ca.cg));
+        while !ca.next(&supergraph) {
+            dbg!(ca.cg.len());
+        }
+        dbg!(ca.cg.len());
+
+        assert_ne!(ca.cg.len(), 0);
 
         // The age claim from C is successfully unwrapped
         unimplemented!();
         // The age claim from D is ignored
         unimplemented!();
-    }
-
-    // TODO
-    fn crawl(ca: &mut CuriousAgent, l: &impl Lookup) {}
-
-    trait Lookup {
-        fn lookup(&self, url: &str) -> Result<Graph, ()>;
-    }
-
-    impl Lookup for BTreeMap<&str, Graph> {
-        fn lookup(&self, url: &str) -> Result<Graph, ()> {
-            let raw = self.get(url).ok_or(())?;
-            Ok(raw.clone().reify(RdfNode::Iri(url.to_string())))
-        }
     }
 }

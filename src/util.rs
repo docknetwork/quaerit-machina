@@ -1,19 +1,23 @@
-pub mod prefix {
-    use crate::types::RdfNode;
+use alloc::collections::BTreeMap;
+use oxigraph::model::Quad;
+use rio_api::model::BlankNode;
 
-    pub fn dock(suffix: &str) -> RdfNode {
+pub mod prefix {
+    use oxigraph::model::NamedNode;
+
+    pub fn dock(suffix: &str) -> NamedNode {
         cat("https://dock.io/rdf/alpha/", suffix)
     }
 
-    pub fn rdf(suffix: &str) -> RdfNode {
+    pub fn rdf(suffix: &str) -> NamedNode {
         cat("http://www.w3.org/1999/02/22-rdf-syntax-ns#", suffix)
     }
 
-    pub fn rdfs(suffix: &str) -> RdfNode {
+    pub fn rdfs(suffix: &str) -> NamedNode {
         cat("http://www.w3.org/2000/01/rdf-schema#", suffix)
     }
 
-    fn cat(pre: &str, suff: &str) -> RdfNode {
+    fn cat(pre: &str, suff: &str) -> NamedNode {
         let ret = format!("{}{}", pre, suff);
         if ![
             "https://dock.io/rdf/alpha/claims",
@@ -33,6 +37,6 @@ pub mod prefix {
         {
             panic!("{} is not in the allowlist", ret);
         }
-        RdfNode::Iri(ret)
+        NamedNode::new(ret).unwrap()
     }
 }
