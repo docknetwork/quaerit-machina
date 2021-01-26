@@ -13,13 +13,9 @@ extern crate core;
 use crate::rdf_graph::Graph;
 use alloc::collections::BTreeMap;
 use oxigraph::model as om;
-use oxigraph::model::Term;
-use oxigraph::sparql::algebra::Query;
-use oxigraph::sparql::EvaluationError;
-use oxigraph::sparql::QueryResults;
-use oxigraph::store::memory::MemoryStore;
+use oxigraph::sparql::{algebra::Query, EvaluationError, QueryResults};
+use oxigraph::store::MemoryStore;
 use std::collections::HashSet;
-use tap::prelude::*;
 
 pub struct CuriousAgent {
     /// queries in this list must all be select statements
@@ -47,12 +43,12 @@ impl CuriousAgent {
             match q {
                 QueryResults::Solutions(solutions) => {
                     for s in solutions {
-                        for (_name, term) in s?.iter() {
-                            if let Some(nn) = as_named_node(term) {
-                                if self.is_novel(nn) {
-                                    ret.push(nn.clone());
-                                }
-                            }
+                        for nn in s?
+                            .iter()
+                            .filter_map(|(_name, term)| as_named_node(term))
+                            .filter(|nn| self.is_novel(nn))
+                        {
+                            ret.push(nn.clone());
                         }
                     }
                 }
@@ -64,16 +60,11 @@ impl CuriousAgent {
         Ok(ret)
     }
 
-    fn add_document_lookup(&mut self, gn: impl Into<om::GraphName>, content: &Graph) {
-        let gn = gn.into();
-        for quad in content.triples() {
-            self.cg.insert(quad.clone().in_graph(gn.clone()));
-        }
-    }
-
     fn lookup(&mut self, nn: om::NamedNode, l: &impl Lookup) {
         if let Some(graph) = l.lookup(nn.as_str()) {
-            self.add_document_lookup(nn.clone(), graph);
+            for quad in graph.triples() {
+                self.cg.insert(quad.clone().in_graph(nn.clone()));
+            }
         }
         self.lookedup.insert(nn.clone().into());
     }
@@ -85,25 +76,14 @@ impl CuriousAgent {
 
     pub fn next(&mut self, l: &impl Lookup) -> Result<bool, EvaluationError> {
         let curious = self.curious()?;
-
-        for nn in &curious {
-            assert!(self.is_novel(nn));
-        }
-
+        debug_assert!(curious.iter().all(|nn| self.is_novel(nn)));
         if curious.is_empty() {
             return Ok(false);
         }
         for nn in &curious {
             self.lookup(nn.clone(), l);
-            if let Some(graph) = l.lookup(nn.as_str()) {
-                self.add_document_lookup(nn.clone(), graph);
-            }
-            self.lookedup.insert(nn.clone().into());
         }
-
-        for nn in &curious {
-            assert!(!self.is_novel(nn));
-        }
+        debug_assert!(!curious.iter().any(|nn| self.is_novel(nn)));
         Ok(true)
     }
 
@@ -122,10 +102,10 @@ impl Lookup for BTreeMap<&str, Graph> {
     }
 }
 
-fn as_named_node(term: &Term) -> Option<&om::NamedNode> {
+fn as_named_node(term: &om::Term) -> Option<&om::NamedNode> {
     match term {
-        Term::NamedNode(nn) => Some(nn),
-        Term::BlankNode(_) | Term::Literal(_) => None,
+        om::Term::NamedNode(nn) => Some(nn),
+        om::Term::BlankNode(_) | om::Term::Literal(_) => None,
     }
 }
 
@@ -142,31 +122,47 @@ mod test {
     use crate::rdf_graph::Graph;
     use crate::ttl::from_ttl;
     use alloc::collections::BTreeMap;
-    use oxigraph::model as om;
     use oxigraph::sparql::QuerySolutionIter;
+    use tap::prelude::*;
 
     #[test]
-    fn delegate_e2e() {
-        // A is trusted
-        // let known = from_ttl(
-        //     "
-        //     @prefix dock: <https://dock.io/rdf/alpha/> .
-        //     @prefix schema: <http://schema.org/> .
-        //     @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
-        //     # Unrestricted delegation
-        //     <uuid:d653df41-fb26-46b2-9edf-35a73836f7e0> dock:allowedSubjects dock:ANYTHING .
-        //     <uuid:d653df41-fb26-46b2-9edf-35a73836f7e0> dock:allowedPredicates dock:ANYTHING .
-        //     <uuid:d653df41-fb26-46b2-9edf-35a73836f7e0> dock:allowedObjects dock:ANYTHING .
-        //     # Delegation that grants only the authority to claim birthdate
-        //     <uuid:ec3ae823-2e51-48ab-bdbf-bc41037eeead> dock:allowedSubjects dock:ANYTHING .
-        //     <uuid:ec3ae823-2e51-48ab-bdbf-bc41037eeead> dock:allowedPredicates
-        //         [ rdfs:member schema:birthDate ] .
-        //     <uuid:ec3ae823-2e51-48ab-bdbf-bc41037eeead> dock:allowedObjects dock:ANYTHING .
-        //     # A is trusted with unrestricted delegation
-        //     <did:a> dock:mayClaim <uuid:d653df41-fb26-46b2-9edf-35a73836f7e0> .
-        //     ",
-        // );
-        let supergraph: &[(&str, &str)] = &[
+    fn simple_crawl() {
+        let mut ca = CuriousAgent::create(curious_about_everything()).unwrap();
+        ca.lookup(om::NamedNode::new("did:a").unwrap(), &supergraph());
+        ca.crawl(&supergraph()).unwrap();
+        assert_eq!(
+            list_graphs(&ca.cg)
+                .map(|term| as_named_node(&term).unwrap().clone().into_string())
+                .pipe(sorted),
+            [
+                "did:b",
+                "did:c:claims",
+                "did:a",
+                "did:a:claims",
+                "did:b:claims",
+                "did:c"
+            ]
+            .iter()
+            .cloned()
+            .map(str::to_string)
+            .pipe(sorted)
+        );
+    }
+
+    fn curious_about_everything() -> Vec<Query> {
+        [
+            "SELECT DISTINCT ?s WHERE { GRAPH ?g { ?s ?p ?o } }",
+            "SELECT DISTINCT ?p WHERE { GRAPH ?g { ?s ?p ?o } }",
+            "SELECT DISTINCT ?o WHERE { GRAPH ?g { ?s ?p ?o } }",
+            "SELECT DISTINCT ?g WHERE { GRAPH ?g { ?s ?p ?o } }",
+        ]
+        .iter()
+        .map(|a| a.parse().unwrap())
+        .collect()
+    }
+
+    fn supergraph() -> BTreeMap<&'static str, Graph> {
+        [
             // A claims that B mayClaim anything
             (
                 "did:a",
@@ -229,56 +225,40 @@ mod test {
                 <did:d> schema:birthDate \"2002-09-24Z\"^^xsd:date .
                 ",
             ),
-        ];
-        let supergraph: BTreeMap<&str, Graph> =
-            supergraph.iter().map(|(a, b)| (*a, from_ttl(b))).collect();
-
-        let mut ca = CuriousAgent::create(curious_about_everything()).unwrap();
-
-        ca.lookup(om::NamedNode::new("did:a").unwrap(), &supergraph);
-        let precrawl = ca.cg.len();
-        ca.crawl(&supergraph).unwrap();
-        assert_ne!(ca.cg.len(), precrawl);
-
-        // TODO assert_eq!(list_graphs(), ...);
-        for n in list_graphs(&ca.cg) {
-            dbg!(n);
-        }
-
-        // The age claim from C is successfully unwrapped
-        // unimplemented!();
-        // The age claim from D is ignored
-        unimplemented!();
-    }
-
-    // fn show(cg: &MemoryStore) -> String {
-    //     use std::io::Cursor;
-    //     let mut ret = Vec::new();
-    //     cg.dump_dataset(Cursor::new(&mut ret), oxigraph::io::DatasetFormat::NQuads)
-    //         .unwrap();
-    //     String::from_utf8(ret).unwrap()
-    // }
-
-    fn as_solutions(q: QueryResults) -> Option<QuerySolutionIter> {
-        match q {
-            QueryResults::Solutions(solutions) => Some(solutions),
-            QueryResults::Boolean(_) | QueryResults::Graph(_) => None,
-        }
-    }
-
-    fn curious_about_everything() -> Vec<Query> {
-        [
-            "SELECT DISTINCT ?s WHERE { GRAPH ?g { ?s ?p ?o } }",
-            "SELECT DISTINCT ?p WHERE { GRAPH ?g { ?s ?p ?o } }",
-            "SELECT DISTINCT ?o WHERE { GRAPH ?g { ?s ?p ?o } }",
-            "SELECT DISTINCT ?g WHERE { GRAPH ?g { ?s ?p ?o } }",
         ]
         .iter()
-        .map(|a| a.parse().unwrap())
+        .map(|(a, b)| (*a, from_ttl(b)))
         .collect()
     }
 
+    fn known() -> Graph {
+        "
+        @prefix dock: <https://dock.io/rdf/alpha/> .
+        @prefix schema: <http://schema.org/> .
+        @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+        # Unrestricted delegation
+        <uuid:d653df41-fb26-46b2-9edf-35a73836f7e0> dock:allowedSubjects dock:ANYTHING .
+        <uuid:d653df41-fb26-46b2-9edf-35a73836f7e0> dock:allowedPredicates dock:ANYTHING .
+        <uuid:d653df41-fb26-46b2-9edf-35a73836f7e0> dock:allowedObjects dock:ANYTHING .
+        # Delegation that grants only the authority to claim birthdate
+        <uuid:ec3ae823-2e51-48ab-bdbf-bc41037eeead> dock:allowedSubjects dock:ANYTHING .
+        <uuid:ec3ae823-2e51-48ab-bdbf-bc41037eeead> dock:allowedPredicates
+            [ rdfs:member schema:birthDate ] .
+        <uuid:ec3ae823-2e51-48ab-bdbf-bc41037eeead> dock:allowedObjects dock:ANYTHING .
+        # A is trusted with unrestricted delegation
+        <did:a> dock:mayClaim <uuid:d653df41-fb26-46b2-9edf-35a73836f7e0> .
+        "
+        .pipe(from_ttl)
+    }
+
     fn list_graphs(store: &MemoryStore) -> impl Iterator<Item = om::Term> {
+        fn as_solutions(q: QueryResults) -> Option<QuerySolutionIter> {
+            match q {
+                QueryResults::Solutions(solutions) => Some(solutions),
+                QueryResults::Boolean(_) | QueryResults::Graph(_) => None,
+            }
+        }
+
         store
             .query("SELECT DISTINCT ?g WHERE { GRAPH ?g { ?s ?p ?o } }")
             .unwrap()
@@ -292,5 +272,11 @@ mod test {
                     .cloned()
                     .collect::<Vec<_>>()
             })
+    }
+
+    fn sorted<T: Ord>(inp: impl IntoIterator<Item = T>) -> Vec<T> {
+        let mut ret = inp.into_iter().collect::<Vec<T>>();
+        ret.sort();
+        ret
     }
 }

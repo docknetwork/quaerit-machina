@@ -274,7 +274,8 @@ checksum = "624a8340c38c1b80fd549087862da4ba43e08858af025b236e509b6649fc13d5"
 [[package]]
 name = "oxigraph"
 version = "0.2.1"
-source = "git+https://github.com/docknetwork/oxigraph.git#dd040a883188350873df0c1697cd0543d3e13a35"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ed070b891a8a842cd7886c760b03db30346ab9dcaca460f60d0f76b3b7240fe2"
 dependencies = [
  "digest",
  "getrandom",
@@ -358,7 +359,6 @@ version = "0.1.0"
 dependencies = [
  "oxigraph",
  "rand",
- "rify",
  "rio_api",
  "rio_turtle",
  "serde",
@@ -448,15 +448,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b5eb417147ba9860a96cfe72a0b93bf88fee1744b5636ec99ab20c1aa9376581"
 
 [[package]]
-name = "rify"
-version = "0.5.1"
-dependencies = [
- "serde",
- "serde_json",
- "wasm-bindgen",
-]
-
-[[package]]
 name = "rio_api"
 version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -509,17 +500,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn",
-]
-
-[[package]]
-name = "serde_json"
-version = "1.0.61"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4fceb2595057b6891a4ee808f70054bd2d12f0e97f1cbb78689b59f676df325a"
-dependencies = [
- "itoa",
- "ryu",
- "serde",
 ]
 
 [[package]]
@@ -617,8 +597,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3cd364751395ca0f68cafb17666eee36b63077fb5ecd972bbcd74c90c4bf736e"
 dependencies = [
  "cfg-if 1.0.0",
- "serde",
- "serde_json",
  "wasm-bindgen-macro",
 ]
 

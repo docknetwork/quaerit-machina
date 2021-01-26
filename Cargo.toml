@@ -9,15 +9,7 @@ rand = "0.8.2"
 rio_api = "0.5.1"
 rio_turtle = "0.5.1"
 tap = "1.0.0"
-
-[dependencies.oxigraph]
-git = "https://github.com/docknetwork/oxigraph.git"
-path = "../oxigraph"
-version = "0.2.1"
-
-[dependencies.rify]
-path = "../rify"
-version = "0.5.1"
+oxigraph = "0.2.1"
 
 [dependencies.serde]
 features = ["derive"]

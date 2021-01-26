@@ -1,8 +1,4 @@
-use crate::convert::AsBlank;
-use crate::util::prefix::{dock, rdf, rdfs};
-use oxigraph::model::BlankNode;
-use oxigraph::model::NamedOrBlankNode;
-use oxigraph::model::Triple;
+use oxigraph::model::{BlankNode, NamedOrBlankNode, Term, Triple};
 use std::collections::HashMap;
 
 /// Invariant upheld: All blank nodes in graph are random.
@@ -11,75 +7,58 @@ pub struct Graph(Vec<Triple>);
 
 impl Graph {
     pub fn new(ts: impl Iterator<Item = Triple>) -> Self {
-        let mut ret = Graph(ts.collect());
-        let mut rename = HashMap::<BlankNode, BlankNode>::new();
-        ret.foreach_blank_mut(|b| {
-            if let Some(n) = rename.get(&b) {
-                *b = n.clone();
-            } else {
-                let n = BlankNode::default();
-                rename.insert(b.clone(), n.clone());
-                *b = n;
-            }
-        });
+        let mut ret = Graph(vec![]);
+        ret.extend_hygienic(ts);
         ret
     }
 
-    pub fn extend(&mut self, other: Self) {
-        for sb in self.blanks() {
-            for ob in other.blanks() {
-                assert_ne!(sb, ob);
-            }
-        }
-        self.0.extend(other.0);
+    /// Add another graph to this one.
+    /// Thes function protects against blank conflations.
+    fn extend_hygienic(&mut self, other: impl Iterator<Item = Triple>) {
+        self.0.extend(rename_blanks(other));
     }
 
     pub fn triples(&self) -> &[Triple] {
         &self.0
     }
+}
 
-    /// make explict that this graph was dereferenced from src
-    /// the output will state that 'src' points to a graph containing the input graph
-    /// the original input graph will be expressed as a container of rdf:statement
-    pub fn reify(&mut self, src: NamedOrBlankNode) {
-        let mut ret = Vec::with_capacity(self.0.len() * 4 + 1);
-        let collection = BlankNode::default();
-        ret.push(Triple::new(src, dock("dereferencesTo"), collection.clone()));
-        for Triple {
-            subject,
+fn rename_blanks(inp: impl Iterator<Item = Triple>) -> impl Iterator<Item = Triple> {
+    type Renames = HashMap<BlankNode, BlankNode>;
+
+    fn rename_bn(bn: BlankNode, renames: &mut Renames) -> BlankNode {
+        renames.entry(bn).or_default().clone()
+    }
+
+    fn rename_named_or_blank(nb: NamedOrBlankNode, renames: &mut Renames) -> NamedOrBlankNode {
+        use NamedOrBlankNode::{BlankNode, NamedNode};
+        match nb {
+            BlankNode(bn) => BlankNode(rename_bn(bn, renames)),
+            NamedNode(nn) => NamedNode(nn),
+        }
+    }
+
+    fn rename_term(tm: Term, renames: &mut Renames) -> Term {
+        use Term::{BlankNode, Literal, NamedNode};
+        match tm {
+            BlankNode(bn) => BlankNode(rename_bn(bn, renames)),
+            NamedNode(nn) => NamedNode(nn),
+            Literal(lt) => Literal(lt),
+        }
+    }
+
+    let mut renames = Renames::new();
+    inp.map(
+        move |Triple {
+                  subject,
+                  predicate,
+                  object,
+              }| Triple {
+            subject: rename_named_or_blank(subject, &mut renames),
             predicate,
-            object,
-        } in self.0.drain(..)
-        {
-            let c = BlankNode::default();
-            ret.push(Triple::new(collection.clone(), rdfs("member"), c.clone()));
-            ret.push(Triple::new(c.clone(), rdf("subject"), subject));
-            ret.push(Triple::new(c.clone(), rdf("predicate"), predicate));
-            ret.push(Triple::new(c, rdf("object"), object));
-        }
-        debug_assert_eq!(ret.capacity(), ret.len());
-        self.0 = ret
-    }
-
-    fn blanks(&self) -> impl Iterator<Item = &BlankNode> {
-        self.0
-            .iter()
-            .map(|Triple { subject, .. }| subject.as_blank())
-            .chain(self.0.iter().map(|Triple { object, .. }| object.as_blank()))
-            .filter_map(|a| a)
-    }
-
-    fn foreach_blank_mut(&mut self, mut f: impl FnMut(&mut BlankNode)) {
-        for Triple {
-            subject,
-            predicate: _,
-            object,
-        } in self.0.iter_mut()
-        {
-            subject.as_blank_mut().map(&mut f);
-            object.as_blank_mut().map(&mut f);
-        }
-    }
+            object: rename_term(object, &mut renames),
+        },
+    )
 }
 
 #[cfg(test)]
