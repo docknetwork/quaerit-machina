@@ -1,5 +1,4 @@
 use crate::convert::AsBlank;
-use crate::types::Term;
 use crate::util::prefix::{dock, rdf, rdfs};
 use oxigraph::model::BlankNode;
 use oxigraph::model::NamedOrBlankNode;

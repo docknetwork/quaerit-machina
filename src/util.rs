@@ -1,7 +1,3 @@
-use alloc::collections::BTreeMap;
-use oxigraph::model::Quad;
-use rio_api::model::BlankNode;
-
 pub mod prefix {
     use oxigraph::model::NamedNode;
 

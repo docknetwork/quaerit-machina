@@ -37,6 +37,7 @@ impl AsBlank for NamedOrBlankNode {
     }
 }
 
+#[cfg(test)]
 /// rio_api_model to oxigraph model
 pub mod rm_to_om {
     use oxigraph::model as om;
