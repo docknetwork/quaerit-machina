@@ -1,3 +1,5 @@
+use oxigraph::model as om;
+
 // pub mod prefix {
 //     use oxigraph::model::NamedNode;
 
@@ -36,3 +38,10 @@
 //         NamedNode::new(ret).unwrap()
 //     }
 // }
+
+pub fn as_named_node(term: &om::Term) -> Option<&om::NamedNode> {
+    match term {
+        om::Term::NamedNode(nn) => Some(nn),
+        om::Term::BlankNode(_) | om::Term::Literal(_) => None,
+    }
+}

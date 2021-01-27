@@ -17,9 +17,14 @@ impl Graph {
     fn extend_hygienic(&mut self, other: impl Iterator<Item = Triple>) {
         self.0.extend(rename_blanks(other));
     }
+}
 
-    pub fn triples(&self) -> &[Triple] {
-        &self.0
+impl IntoIterator for Graph {
+    type IntoIter = <Vec<Triple> as IntoIterator>::IntoIter;
+    type Item = Triple;
+
+    fn into_iter(self) -> <Self as IntoIterator>::IntoIter {
+        self.0.into_iter()
     }
 }
 

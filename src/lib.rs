@@ -1,7 +1,12 @@
+mod agent;
 mod convert;
+mod crawl_progress;
+mod curiosity;
 #[cfg(test)]
 mod delegation_rules;
+mod lookup;
 mod rdf_graph;
+mod store;
 mod translate;
 mod ttl;
 mod types;
@@ -10,128 +15,31 @@ mod util;
 extern crate alloc;
 extern crate core;
 
-use crate::rdf_graph::Graph;
-use alloc::collections::BTreeMap;
-use oxigraph::model as om;
-use oxigraph::sparql::{algebra::Query, EvaluationError, QueryResults};
-use oxigraph::store::MemoryStore;
-use std::collections::HashSet;
-
-pub struct CuriousAgent {
-    /// queries in this list must all be select statements
-    curiosity: Vec<Query>,
-    cg: MemoryStore,
-    lookedup: HashSet<om::GraphName>,
-}
-
-impl CuriousAgent {
-    pub fn create(curiosity: Vec<Query>) -> Result<Self, ()> {
-        if !curiosity.iter().all(is_select) {
-            return Err(());
-        }
-        Ok(Self {
-            curiosity,
-            cg: MemoryStore::new(),
-            lookedup: Default::default(),
-        })
-    }
-
-    pub fn curious(&self) -> Result<Vec<om::NamedNode>, EvaluationError> {
-        let mut ret = Vec::new();
-        for cur in &self.curiosity {
-            let q = self.cg.query(cur.clone())?;
-            match q {
-                QueryResults::Solutions(solutions) => {
-                    for s in solutions {
-                        for nn in s?
-                            .iter()
-                            .filter_map(|(_name, term)| as_named_node(term))
-                            .filter(|nn| self.is_novel(nn))
-                        {
-                            ret.push(nn.clone());
-                        }
-                    }
-                }
-                QueryResults::Boolean(_) | QueryResults::Graph(_) => {
-                    panic!("Expected SELECT statements only.");
-                }
-            }
-        }
-        Ok(ret)
-    }
-
-    fn lookup(&mut self, nn: om::NamedNode, l: &impl Lookup) {
-        if let Some(graph) = l.lookup(nn.as_str()) {
-            for quad in graph.triples() {
-                self.cg.insert(quad.clone().in_graph(nn.clone()));
-            }
-        }
-        self.lookedup.insert(nn.clone().into());
-    }
-
-    pub fn crawl(&mut self, l: &impl Lookup) -> Result<(), EvaluationError> {
-        while self.next(l)? {}
-        Ok(())
-    }
-
-    pub fn next(&mut self, l: &impl Lookup) -> Result<bool, EvaluationError> {
-        let curious = self.curious()?;
-        debug_assert!(curious.iter().all(|nn| self.is_novel(nn)));
-        if curious.is_empty() {
-            return Ok(false);
-        }
-        for nn in &curious {
-            self.lookup(nn.clone(), l);
-        }
-        debug_assert!(!curious.iter().any(|nn| self.is_novel(nn)));
-        Ok(true)
-    }
-
-    fn is_novel(&self, nn: &om::NamedNode) -> bool {
-        !self.lookedup.contains(&nn.clone().into())
-    }
-}
-
-pub trait Lookup {
-    fn lookup(&self, url: &str) -> Option<&Graph>;
-}
-
-impl Lookup for BTreeMap<&str, Graph> {
-    fn lookup(&self, url: &str) -> Option<&Graph> {
-        self.get(url)
-    }
-}
-
-fn as_named_node(term: &om::Term) -> Option<&om::NamedNode> {
-    match term {
-        om::Term::NamedNode(nn) => Some(nn),
-        om::Term::BlankNode(_) | om::Term::Literal(_) => None,
-    }
-}
-
-fn is_select(q: &Query) -> bool {
-    match q {
-        Query::Select { .. } => true,
-        _ => false,
-    }
-}
+pub use agent::Agent;
 
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::agent::Agent;
+    use crate::curiosity::Curiosity;
     use crate::rdf_graph::Graph;
+    use crate::store::Store;
     use crate::ttl::from_ttl;
+    use crate::util::as_named_node;
     use alloc::collections::BTreeMap;
+    use oxigraph::model as om;
     use oxigraph::sparql::QuerySolutionIter;
+    use oxigraph::sparql::{algebra::Query, QueryResults};
+    use oxigraph::store::MemoryStore;
     use tap::prelude::*;
 
     #[test]
     fn simple_crawl() {
-        let mut ca = CuriousAgent::create(curious_about_everything()).unwrap();
-        ca.lookup(om::NamedNode::new("did:a").unwrap(), &supergraph());
-        ca.crawl(&supergraph()).unwrap();
+        let mut ca = default_agent();
+        ca.investigate(om::NamedNode::new("did:a").unwrap());
+        ca.crawl().unwrap();
         assert_eq!(
-            list_graphs(&ca.cg)
+            list_graphs(&ca)
                 .map(|term| as_named_node(&term).unwrap().clone().into_string())
                 .pipe(sorted),
             [
@@ -147,6 +55,13 @@ mod test {
             .map(str::to_string)
             .pipe(sorted)
         );
+    }
+
+    fn default_agent() -> Agent<MemoryStore, BTreeMap<&'static str, Graph>> {
+        let curio = Curiosity::create(curious_about_everything()).unwrap();
+        let memst = MemoryStore::default();
+        let sup = supergraph();
+        Agent::new(curio, memst, sup)
     }
 
     fn curious_about_everything() -> Vec<Query> {
@@ -231,7 +146,7 @@ mod test {
         .collect()
     }
 
-    fn known() -> Graph {
+    fn _known() -> Graph {
         "
         @prefix dock: <https://dock.io/rdf/alpha/> .
         @prefix schema: <http://schema.org/> .
@@ -251,7 +166,7 @@ mod test {
         .pipe(from_ttl)
     }
 
-    fn list_graphs(store: &MemoryStore) -> impl Iterator<Item = om::Term> {
+    fn list_graphs(store: &impl Store) -> impl Iterator<Item = om::Term> {
         fn as_solutions(q: QueryResults) -> Option<QuerySolutionIter> {
             match q {
                 QueryResults::Solutions(solutions) => Some(solutions),
@@ -260,7 +175,11 @@ mod test {
         }
 
         store
-            .query("SELECT DISTINCT ?g WHERE { GRAPH ?g { ?s ?p ?o } }")
+            .query(
+                "SELECT DISTINCT ?g WHERE { GRAPH ?g { ?s ?p ?o } }"
+                    .parse()
+                    .unwrap(),
+            )
             .unwrap()
             .pipe(as_solutions)
             .unwrap()
