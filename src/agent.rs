@@ -24,11 +24,18 @@ impl<S: Store, L: Lookup> Agent<S, L> {
         }
     }
 
-    pub fn investigate(&mut self, document: om::NamedNode) {
-        self.progress.visit(document.clone());
-        self.lookup
-            .lookup(&document)
-            .map(|cont| self.note_document_contents(document, cont));
+    pub async fn investigate(&mut self, document: om::NamedNode) -> Result<(), L::Error> {
+        match self.lookup.lookup(&document).await {
+            Ok(content) => {
+                self.note_document_contents(document.clone(), content);
+                self.progress.visit(document);
+                Ok(())
+            }
+            Err(e) => {
+                self.progress.error(document);
+                Err(e)
+            }
+        }
     }
 
     fn curious(&self) -> Result<Vec<om::NamedNode>, EvaluationError> {
@@ -48,19 +55,19 @@ impl<S: Store, L: Lookup> Agent<S, L> {
         }
     }
 
-    pub fn crawl(&mut self) -> Result<(), EvaluationError> {
-        while self.next()? {}
+    pub async fn crawl(&mut self) -> Result<(), EvaluationError> {
+        while self.next().await? {}
         Ok(())
     }
 
-    pub fn next(&mut self) -> Result<bool, EvaluationError> {
+    pub async fn next(&mut self) -> Result<bool, EvaluationError> {
         let curious = self.curious()?;
         debug_assert!(curious.iter().all(|nn| self.progress.novel(nn)));
         if curious.is_empty() {
             return Ok(false);
         }
         for nn in &curious {
-            self.investigate(nn.clone());
+            let _ = self.investigate(nn.clone()).await;
         }
         debug_assert!(!curious.iter().any(|nn| self.progress.novel(nn)));
         Ok(true)

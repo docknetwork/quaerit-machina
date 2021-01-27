@@ -10,6 +10,8 @@ rio_api = "0.5.1"
 rio_turtle = "0.5.1"
 tap = "1.0.0"
 oxigraph = "0.2.1"
+async-trait = "0.1.42"
+futures-lite = "1.11.3"
 
 [dependencies.serde]
 features = ["derive"]

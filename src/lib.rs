@@ -27,6 +27,7 @@ mod test {
     use crate::ttl::from_ttl;
     use crate::util::as_named_node;
     use alloc::collections::BTreeMap;
+    use futures_lite::future::block_on;
     use oxigraph::model as om;
     use oxigraph::sparql::QuerySolutionIter;
     use oxigraph::sparql::{algebra::Query, QueryResults};
@@ -35,26 +36,28 @@ mod test {
 
     #[test]
     fn simple_crawl() {
-        let mut ca = default_agent();
-        ca.investigate(om::NamedNode::new("did:a").unwrap());
-        ca.crawl().unwrap();
-        assert_eq!(
-            list_graphs(&ca)
-                .map(|term| as_named_node(&term).unwrap().clone().into_string())
-                .pipe(sorted),
-            [
-                "did:b",
-                "did:c:claims",
-                "did:a",
-                "did:a:claims",
-                "did:b:claims",
-                "did:c"
-            ]
-            .iter()
-            .cloned()
-            .map(str::to_string)
-            .pipe(sorted)
-        );
+        block_on(async {
+            let mut ca = default_agent();
+            ca.investigate(named_node("did:a")).await.unwrap();
+            ca.crawl().await.unwrap();
+            assert_eq!(
+                list_graphs(&ca)
+                    .map(|term| as_named_node(&term).unwrap().clone().into_string())
+                    .pipe(sorted),
+                [
+                    "did:b",
+                    "did:c:claims",
+                    "did:a",
+                    "did:a:claims",
+                    "did:b:claims",
+                    "did:c"
+                ]
+                .iter()
+                .cloned()
+                .map(str::to_string)
+                .pipe(sorted)
+            );
+        })
     }
 
     fn default_agent() -> Agent<MemoryStore, BTreeMap<&'static str, Graph>> {
@@ -197,5 +200,9 @@ mod test {
         let mut ret = inp.into_iter().collect::<Vec<T>>();
         ret.sort();
         ret
+    }
+
+    fn named_node(iri: &str) -> om::NamedNode {
+        om::NamedNode::new(iri).unwrap()
     }
 }
