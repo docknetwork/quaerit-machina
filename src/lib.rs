@@ -16,6 +16,10 @@ extern crate alloc;
 extern crate core;
 
 pub use agent::Agent;
+pub use curiosity::Curiosity;
+pub use lookup::Lookup;
+pub use rdf_graph::Graph;
+pub use store::Store;
 
 #[cfg(test)]
 mod test {
