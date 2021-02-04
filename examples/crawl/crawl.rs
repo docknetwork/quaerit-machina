@@ -3,10 +3,12 @@ extern crate core;
 mod rm_to_om;
 
 use async_trait::async_trait;
+use core::fmt::Debug;
 use oxigraph::io::DatasetFormat;
 use oxigraph::model as om;
 use oxigraph::model::NamedNode;
 use oxigraph::MemoryStore;
+use quaerit_machina::LookupError;
 use quaerit_machina::{Agent, Curiosity, Graph, Lookup};
 use reqwest::header::CONTENT_TYPE;
 use reqwest::Url;
@@ -81,13 +83,12 @@ struct CachedHttp {
 
 #[async_trait]
 impl Lookup for CachedHttp {
-    type Error = Berr;
-    async fn lookup(&mut self, iri: &NamedNode) -> Result<Graph, Self::Error> {
-        let url: Url = iri.as_str().parse()?;
+    async fn lookup(&mut self, iri: &NamedNode) -> Result<Graph, LookupError> {
+        let url: Url = iri.as_str().parse().map_err(debg)?;
         if let Some(g) = self.cache.get(&url) {
             return Ok(g.clone());
         }
-        let ret = http_lookup(&url).await?;
+        let ret = http_lookup(&url).await.map_err(debg)?;
         self.cache.insert(url, ret.clone());
         Ok(ret)
     }
@@ -114,4 +115,8 @@ fn show(store: &MemoryStore) -> String {
         .dump_dataset(&mut writer, DatasetFormat::NQuads)
         .unwrap();
     String::from_utf8(writer.into_inner()).unwrap()
+}
+
+fn debg(t: impl Debug) -> String {
+    format!("{:?}", t)
 }

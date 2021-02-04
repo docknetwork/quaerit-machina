@@ -1,6 +1,6 @@
 use crate::crawl_progress::CrawlProgress;
 use crate::curiosity::Curiosity;
-use crate::lookup::Lookup;
+use crate::lookup::{Lookup, LookupError};
 use crate::rdf_graph::Graph;
 use crate::store::Store;
 use crate::util::as_named_node;
@@ -24,7 +24,7 @@ impl<S: Store, L: Lookup> Agent<S, L> {
         }
     }
 
-    pub async fn investigate(&mut self, document: om::NamedNode) -> Result<(), L::Error> {
+    pub async fn investigate(&mut self, document: om::NamedNode) -> Result<(), LookupError> {
         match self.lookup.lookup(&document).await {
             Ok(content) => {
                 self.note_document_contents(document.clone(), content);

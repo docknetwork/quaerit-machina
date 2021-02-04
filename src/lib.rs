@@ -17,7 +17,7 @@ extern crate core;
 
 pub use agent::Agent;
 pub use curiosity::Curiosity;
-pub use lookup::Lookup;
+pub use lookup::{Lookup, LookupError};
 pub use rdf_graph::Graph;
 pub use store::Store;
 
